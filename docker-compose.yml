@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fx}
+      POSTGRES_DB: ${POSTGRES_DB:-fxwatch}
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fx}"]
+      interval: 5s
+      retries: 10
+
+  n8n:
+    image: n8nio/n8n:latest
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-dev-only-key}
+      GENERIC_TIMEZONE: ${TZ:-Africa/Tunis}
+      TZ: ${TZ:-Africa/Tunis}
+    ports: ["5678:5678"]
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n:/workflows:ro
+    depends_on:
+      db: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  n8n_data:

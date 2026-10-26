@@ -1,0 +1,173 @@
+{
+  "name": "FX collector",
+  "nodes": [
+    {
+      "id": "a1",
+      "name": "Every 6 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */6 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a2",
+      "name": "Which currencies to watch?",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT base FROM watch_pairs WHERE active",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "FX DB"
+        }
+      }
+    },
+    {
+      "id": "a3",
+      "name": "Call the rates API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://open.er-api.com/v6/latest/{{ $json.base }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "a4",
+      "name": "Keep only what we need",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        720,
+        200
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "base",
+              "value": "={{ $json.base_code }}",
+              "type": "string"
+            },
+            {
+              "id": "s2",
+              "name": "updated_unix",
+              "value": "={{ $json.time_last_update_unix }}",
+              "type": "number"
+            },
+            {
+              "id": "s3",
+              "name": "rates_json",
+              "value": "={{ JSON.stringify($json.rates) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a5",
+      "name": "Save to database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO fx_rates (base, quote, rate, provider_updated_at)\nSELECT $1, w.quote, (($2::jsonb) ->> w.quote)::numeric, to_timestamp($3::bigint)\nFROM watch_pairs w\nWHERE w.base = $1 AND w.active AND ($2::jsonb) ? w.quote\nON CONFLICT DO NOTHING",
+        "options": {
+          "queryReplacement": "={{ [$json.base, $json.rates_json, $json.updated_unix] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "FX DB"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 hours": {
+      "main": [
+        [
+          {
+            "node": "Which currencies to watch?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which currencies to watch?": {
+      "main": [
+        [
+          {
+            "node": "Call the rates API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call the rates API": {
+      "main": [
+        [
+          {
+            "node": "Keep only what we need",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep only what we need": {
+      "main": [
+        [
+          {
+            "node": "Save to database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

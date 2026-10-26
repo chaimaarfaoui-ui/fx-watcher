@@ -1,0 +1,97 @@
+{
+  "name": "FX health check",
+  "nodes": [
+    {
+      "id": "d1",
+      "name": "Every 6 hours (45 min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "45 */6 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d2",
+      "name": "Is data fresh?",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH stale AS (\n    SELECT 'stale_data'::text AS kind,\n           current_date       AS day,\n           CASE WHEN max(provider_updated_at) IS NULL\n                THEN 'No API data has ever been collected'\n                ELSE 'Latest API rate is from ' || to_char(max(provider_updated_at), 'YYYY-MM-DD HH24:MI')\n                     || ' UTC (about ' || round(extract(epoch FROM now() - max(provider_updated_at)) / 3600)\n                     || ' hours ago)'\n           END                AS detail\n    FROM fx_rates\n    WHERE source = 'api'\n    HAVING max(provider_updated_at) IS NULL\n        OR max(provider_updated_at) < now() - interval '36 hours'\n), claimed AS (\n    INSERT INTO system_alerts (kind, day, detail)\n    SELECT kind, day, detail FROM stale\n    ON CONFLICT (kind, day) DO NOTHING\n    RETURNING detail\n)\nSELECT detail FROM claimed",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "FX DB"
+        }
+      }
+    },
+    {
+      "id": "d3",
+      "name": "Alert: data problem",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        520,
+        200
+      ],
+      "parameters": {
+        "fromEmail": "REPLACE_WITH_YOUR_EMAIL",
+        "toEmail": "REPLACE_WITH_YOUR_EMAIL",
+        "subject": "=FX Watcher: data problem",
+        "emailFormat": "text",
+        "text": "=FX data problem: {{ $json.detail }}",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 hours (45 min)": {
+      "main": [
+        [
+          {
+            "node": "Is data fresh?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is data fresh?": {
+      "main": [
+        [
+          {
+            "node": "Alert: data problem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

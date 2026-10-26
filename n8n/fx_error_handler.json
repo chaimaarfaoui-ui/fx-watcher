@@ -1,0 +1,84 @@
+{
+  "name": "FX error handler",
+  "nodes": [
+    {
+      "id": "e1",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e2",
+      "name": "Log error in DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_errors (workflow_name, node_name, message) VALUES ($1, $2, $3)",
+        "options": {
+          "queryReplacement": "={{ [$json.workflow.name, $json.execution.lastNodeExecuted, $json.execution.error.message] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "FX DB"
+        }
+      }
+    },
+    {
+      "id": "e3",
+      "name": "Alert: workflow failed",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "REPLACE_WITH_YOUR_EMAIL",
+        "toEmail": "REPLACE_WITH_YOUR_EMAIL",
+        "subject": "=FX Watcher: workflow failed",
+        "emailFormat": "text",
+        "text": "=Workflow failed: {{ $json.workflow.name }}\nNode: {{ $json.execution.lastNodeExecuted }}\n{{ $json.execution.error.message }}",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log error in DB",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Alert: workflow failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

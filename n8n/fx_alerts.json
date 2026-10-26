@@ -1,0 +1,158 @@
+{
+  "name": "FX alerts",
+  "nodes": [
+    {
+      "id": "b1",
+      "name": "Every 6 hours (30 min after collector)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 */6 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b2",
+      "name": "New big moves?",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH latest AS (\n    SELECT DISTINCT ON (base, quote) *\n    FROM fx_moves\n    ORDER BY base, quote, provider_updated_at DESC\n), triggered AS (\n    SELECT l.*\n    FROM latest l\n    JOIN watch_pairs w ON w.base = l.base AND w.quote = l.quote\n    WHERE w.active\n      AND l.pct_change IS NOT NULL\n      AND abs(l.pct_change) >= w.threshold_pct\n), claimed AS (\n    INSERT INTO alerts_log (kind, base, quote, provider_updated_at, metric)\n    SELECT 'move', base, quote, provider_updated_at, pct_change FROM triggered\n    ON CONFLICT (kind, base, quote, provider_updated_at) DO NOTHING\n    RETURNING base, quote, provider_updated_at\n)\nSELECT t.base, t.quote, t.rate, t.prev_rate, t.pct_change,\n       COALESCE(e.total, 0)                                    AS monthly_exposure,\n       round(COALESCE(e.total, 0) * (t.rate - t.prev_rate), 0) AS extra_monthly_cost\nFROM triggered t\nJOIN claimed c USING (base, quote, provider_updated_at)\nLEFT JOIN (SELECT currency, sum(monthly_amount) AS total\n           FROM import_exposure GROUP BY currency) e ON e.currency = t.base",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "FX DB"
+        }
+      }
+    },
+    {
+      "id": "b3",
+      "name": "Alert: rate moved",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        520,
+        100
+      ],
+      "parameters": {
+        "fromEmail": "REPLACE_WITH_YOUR_EMAIL",
+        "toEmail": "REPLACE_WITH_YOUR_EMAIL",
+        "subject": "=FX alert: {{ $json.base }}/{{ $json.quote }} moved {{ $json.pct_change }}%",
+        "emailFormat": "text",
+        "text": "={{ $json.base }}/{{ $json.quote }} moved {{ $json.pct_change }}%\n{{ $json.prev_rate }} -> {{ $json.rate }}\nMonthly {{ $json.base }} exposure ({{ $json.monthly_exposure }}) now costs {{ $json.extra_monthly_cost }} {{ $json.quote }} more per month (negative = cheaper).\nRates by exchangerate-api.com",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "id": "b4",
+      "name": "Budget crossed?",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH latest AS (\n    SELECT DISTINCT ON (base, quote) *\n    FROM fx_moves\n    ORDER BY base, quote, provider_updated_at DESC\n), crossed AS (\n    SELECT l.base, l.quote, l.rate, l.prev_rate, l.provider_updated_at,\n           b.budget_rate, b.tolerance_pct\n    FROM latest l\n    JOIN budget_rates b ON b.base = l.base AND b.quote = l.quote\n    WHERE l.rate > b.budget_rate * (1 + b.tolerance_pct / 100)\n      AND (l.prev_rate IS NULL OR l.prev_rate <= b.budget_rate * (1 + b.tolerance_pct / 100))\n), claimed AS (\n    INSERT INTO alerts_log (kind, base, quote, provider_updated_at, metric)\n    SELECT 'budget', base, quote, provider_updated_at, round(100 * (rate / budget_rate - 1), 4)\n    FROM crossed\n    ON CONFLICT (kind, base, quote, provider_updated_at) DO NOTHING\n    RETURNING base, quote, provider_updated_at\n)\nSELECT c.base, c.quote, c.rate, c.budget_rate,\n       round(100 * (c.rate / c.budget_rate - 1), 2)                       AS pct_over_budget,\n       COALESCE(e.total, 0)                                                AS monthly_exposure,\n       round(COALESCE(e.total, 0) * (c.rate - c.budget_rate), 0)           AS extra_vs_budget\nFROM crossed c\nJOIN claimed k USING (base, quote, provider_updated_at)\nLEFT JOIN (SELECT currency, sum(monthly_amount) AS total\n           FROM import_exposure GROUP BY currency) e ON e.currency = c.base",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "FX DB"
+        }
+      }
+    },
+    {
+      "id": "b5",
+      "name": "Alert: over budget",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "REPLACE_WITH_YOUR_EMAIL",
+        "toEmail": "REPLACE_WITH_YOUR_EMAIL",
+        "subject": "=FX alert: {{ $json.base }}/{{ $json.quote }} is above budget",
+        "emailFormat": "text",
+        "text": "={{ $json.base }}/{{ $json.quote }} is {{ $json.pct_over_budget }}% above your budget rate ({{ $json.budget_rate }}).\nNow: {{ $json.rate }}\nExtra cost vs budget: {{ $json.extra_vs_budget }} {{ $json.quote }} per month on {{ $json.monthly_exposure }} {{ $json.base }}.\nRates by exchangerate-api.com",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 hours (30 min after collector)": {
+      "main": [
+        [
+          {
+            "node": "New big moves?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Budget crossed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New big moves?": {
+      "main": [
+        [
+          {
+            "node": "Alert: rate moved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Budget crossed?": {
+      "main": [
+        [
+          {
+            "node": "Alert: over budget",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
