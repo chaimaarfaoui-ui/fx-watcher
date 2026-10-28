@@ -35,8 +35,35 @@ flowchart LR
 Business settings (watched pairs, thresholds, supplier amounts, budget rates) live in database tables,
 so they can be changed with plain SQL and no code changes. The amounts in `schema.sql` are examples.
 
+## Demo
+
+**Scheduled runs.** The collector starts on the hour (12:00, 18:00) without anyone clicking.
+It runs every 6 hours while n8n is running.
+
+![Collector executions](docs/collector-scheduled-runs.png)
+
+**Email alert.** A test alert with a lowered threshold: the rate change and what it costs per month in TND.
+
+![Alert email](docs/alert-email.png)
+
+**Failure handling.** During a real network outage the error handler logged the failure in the database
+(green) but could not send its email (red), because the network itself was down. The next scheduled runs succeeded.
+
+![Error handler during an outage](docs/error-handler-outage.png)
+
+**Tests.** All 21 tests pass: 4 unit tests and 17 against a real PostgreSQL database.
+
+![21 tests passing](docs/tests-passing.png)
+
 ## Project structure
 
+```
+sql/        schema, alert queries, weekly digest, learning queries
+scripts/    fetch_rates.py (Python collector), build_workflows.py, demo_history.py
+n8n/        5 importable workflows
+tests/      4 unit tests + 17 database tests
+docs/       screenshots
+```
 
 The n8n workflow files are generated from the SQL files by `scripts/build_workflows.py`,
 so the SQL stays the single source of truth.
@@ -63,15 +90,14 @@ cp .env.example .env              # edit the values
 3. Run the Python collector once, then the tests:
    ```bash
    python scripts/fetch_rates.py
-   pytest
+   python -m pytest
    ```
 4. In n8n, import the files from `n8n/`, attach your Postgres and SMTP credentials, and put your email address in the email nodes.
    Publish **FX error handler** first, then set it as the *Error workflow* of the other four and publish them.
 
 A `docker-compose.yml` (n8n + Postgres) is included as an alternative setup. It is untested.
 
-## Testing
+## Limitations
 
-21 automated tests pass: 4 unit tests (API parsing) and 17 database tests covering the schema constraints,
-duplicate protection, alert logic and the weekly summary. I also ran the full flow against the live API:
-real rates stored, a real alert email sent with the correct monthly cost, and a repeat run that added nothing.
+- Self-hosted n8n only runs while the machine it lives on is on, so there are gaps when it is off.
+- Email alerts cannot be sent when the network is down. The failure is still logged in `workflow_errors`.
